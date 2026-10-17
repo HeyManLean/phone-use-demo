@@ -14,6 +14,8 @@ import Foundation
     static let nudge = 12                   // mouse units the pointer is wiggled by to find it on screen
     static let aimTolerance = 0.008         // screen fraction; a bigger miss is corrected before pressing
     static let maxMiss = 0.06               // bigger misses are still corrected, but not learned from
+    /// Full-scale value of the board's absolute pointer report (0..absMax per axis).
+    static let absMax = 65535
 
     struct Span: Codable, Equatable { var w: Int, h: Int }
     private struct Saved: Codable { var w: Int, h: Int, seen: [String: [[Double]]]?, quality: Double?, aspect: Double? }
@@ -47,6 +49,9 @@ import Foundation
                 seen[axis] = (saved.seen?[axis] ?? []).filter { $0.count == 2 }.map { ($0[0], $0[1]) }.suffix(12)
             }
         }
+        // The board reports an absolute pointer mapped over the whole screen, so the coordinate space
+        // is fixed at 0..65535 and no calibration is needed: span is just the report's range.
+        span = Span(w: Point.absMax, h: Point.absMax)
     }
 
     var calibrated: Bool { span != nil }
@@ -59,6 +64,17 @@ import Foundation
     /// Returns true when it calibrated itself; otherwise the user taps the pointer (finishCalibration).
     /// `progress` gets 0 (homing), then 1, 2 (each probe).
     func startCalibration(progress: ((Int) -> Void)? = nil) async throws -> Bool {
+        // The board's pointer is absolute over a fixed 0..65535 range, so there is no mapping to
+        // measure: calibrating would only replace the correct span with a relative-pointer one.
+        span = Span(w: Self.absMax, h: Self.absMax)
+        pos = nil
+        (quality, aspect) = (0, screenAspect())
+        progress?(2)
+        return true
+    }
+
+    /// Unused with an absolute pointer, kept so the setup screen still compiles and reports success.
+    private func legacyCalibration(progress: ((Int) -> Void)? = nil) async throws -> Bool {
         pos = nil
         progress?(0)
         try await device.send("home")
@@ -239,13 +255,10 @@ import Foundation
             try await device.send("release")
             (pos, link) = (nil, device.links)
         }
-        if pos == nil || (rehome && moves >= Self.rehomeEvery) {
-            try await device.send("home")
-            (pos, moves) = ((0, 0), 0)
-        }
-        let (x, y) = pos!
+        // Absolute pointer: the target is sent as-is, so there is nothing to accumulate, no homing to
+        // correct drift, and iOS pointer acceleration cannot skew the result.
         pos = nil  // unknown until the move succeeds
-        try await device.send("move \(tx - x) \(ty - y)")
+        try await device.send("moveabs \(tx) \(ty)")
         (pos, moves) = ((tx, ty), moves + 1)
     }
 
@@ -259,7 +272,9 @@ import Foundation
 
     /// aim: find the pointer on screen first (slower); worth it when a tap just missed.
     func tap(_ x: Double, _ y: Double, aim: Bool = false) async throws {
-        try await point(x, y, aim: aim)
+        // With an absolute pointer aiming cannot land anywhere but the requested spot, so the
+        // locate-and-correct pass is pointless: it would only add about a second per tap.
+        try await point(x, y, aim: false)
         try await device.send("click")
         try await Task.sleep(nanoseconds: UInt64(Self.tapGap * 1e9))
     }

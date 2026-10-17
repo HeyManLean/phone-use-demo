@@ -53,6 +53,13 @@ static volatile uint32_t kbps;
 static std::atomic<uint32_t> drops, replyDrops;
 static volatile uint32_t lastCmdMs;  // last `cmd` write: replies are expected, keep video's share small
 
+// `<id> ping` / `<id> log ...` are keepalives, not actions: they must not throttle video.
+static bool isKeepalive(const char *l) {
+  while (*l && *l != ' ') l++;      // skip the request id
+  while (*l == ' ') l++;
+  return !strncmp(l, "ping", 4) || !strncmp(l, "log", 3);
+}
+
 #if DEBUG_SERIAL
 #define BLE_LOG(...) Serial.printf("ble: " __VA_ARGS__)
 #else
@@ -139,7 +146,11 @@ class CharCb : public NimBLECharacteristicCallbacks {
     char line[CMD_MAX] = {0};
     v.trim();
     strncpy(line, v.c_str(), CMD_MAX - 1);
-    lastCmdMs = millis();
+    // Keepalives must not engage the video throttle. The app pings (and relays its own log lines)
+    // several times a second for the whole run; counting those would pin video to VIDEO_CTRL_PKTS
+    // permanently and starve the stream, which is what made the agent see stale frames and retry
+    // the same action. Only real actions shorten video's share.
+    if (!isKeepalive(line)) lastCmdMs = millis();
     if (line[0]) xQueueSend(cmdQueue, line, 0);  // full queue: the app times out and retries
   }
   void onRead(NimBLECharacteristic *c, NimBLEConnInfo &ci) override {

@@ -19,29 +19,45 @@
 #include "video_link.h"
 #include "src/airplay/airplay.h"
 
-const int STEP = 10;      // max pointer delta per report while moving
-const int STEP_MS = 8;    // report interval; constant pace keeps iOS acceleration predictable
-const int HOME_REPORTS = 50;
 #ifndef DEBUG_SERIAL
 #define DEBUG_SERIAL 0  // 1: echo commands and the AirPlay handshake over USB serial
 #endif
 
 const int WATCHDOG_MS = 8000;  // a hung loop (e.g. blocked USB) reboots the board instead of staying offline
 
-USBHIDMouse mouse;
+const int STEP = 10;      // max pointer delta per legacy `move` unit (kept for compatibility)
+const int STEP_MS = 8;
+const int HOME_REPORTS = 50;   // unused since the pointer became absolute; kept for reference
+// Absolute pointer, 0..65535 per axis (same convention the ESP32 MCP firmware uses). Absolute
+// positioning removes every source of drift the relative pointer had: iOS pointer acceleration,
+// lost reports and the "assume it landed exactly where we aimed" bookkeeping in the app.
+const long PTR_MAX = 65535;
+// One legacy `move` unit = 1/1500 of the screen, so an app that still sends relative moves keeps
+// working; `moveabs` is the precise path.
+const long MOVE_UNITS_PER_SCREEN = 1500;
+static long ptrx = 0, ptry = 0;  // current pointer position in 0..65535
+
+USBHIDAbsoluteMouse mouse;
 USBHIDKeyboard keyboard;
 USBHIDConsumerControl consumer;
 const uint16_t AC_HOME = 0x0223;  // HID consumer page: AC Home
 static String receiverName = "ESP32 Agent";
 
-void movePaced(long dx, long dy) {
-  while (dx || dy) {
-    int sx = constrain(dx, -STEP, STEP), sy = constrain(dy, -STEP, STEP);
-    mouse.move(sx, sy);
-    dx -= sx;
-    dy -= sy;
-    delay(STEP_MS);
-  }
+// The absolute mouse report is 16-bit signed; scale 0..65535 down to 0..32767.
+static inline int16_t absw(long v) { return (int16_t)(v >> 1); }
+
+static void ptrReport() { mouse.move(absw(ptrx), absw(ptry)); }
+
+static void ptrSet(long x, long y) {
+  ptrx = constrain(x, 0L, PTR_MAX);
+  ptry = constrain(y, 0L, PTR_MAX);
+  ptrReport();
+}
+
+static void ptrMove(long dx, long dy) {
+  long sx = dx * PTR_MAX / MOVE_UNITS_PER_SCREEN;
+  long sy = dy * PTR_MAX / MOVE_UNITS_PER_SCREEN;
+  ptrSet(ptrx + sx, ptry + sy);
 }
 
 uint8_t keyCode(const String &k) {
@@ -92,15 +108,16 @@ String run(const String &line) {
 
   if (cmd == "ping") return "ok";
   if (!usbReady()) return "err phone usb asleep (unlock the phone)";
-  if (cmd == "home") {  // slam the pointer into the top-left corner
-    for (int i = 0; i < HOME_REPORTS; i++) { mouse.move(-127, -127); delay(2); }
+  if (cmd == "home") { ptrSet(0, 0); return "ok"; }              // absolute: exact top-left
+  if (cmd == "moveabs") {                                        // absolute position, 0..65535
+    ptrSet((long)constrain(a, 0L, 65535L), (long)constrain(b, 0L, 65535L));
     return "ok";
   }
-  if (cmd == "move") { movePaced(a, b); return "ok"; }
+  if (cmd == "move") { ptrMove(a, b); return "ok"; }
   if (cmd == "press") { mouse.press(MOUSE_LEFT); return "ok"; }
   if (cmd == "release") { mouse.release(MOUSE_LEFT); return "ok"; }
   if (cmd == "click") { mouse.press(MOUSE_LEFT); delay(60); mouse.release(MOUSE_LEFT); return "ok"; }
-  if (cmd == "scroll") { mouse.move(0, 0, a, b); return "ok"; }
+  if (cmd == "scroll") { mouse.move(absw(ptrx), absw(ptry), a, b); return "ok"; }
   if (cmd == "type") { keyboard.print(arg); return "ok"; }
   if (cmd == "key") return pressCombo(arg) ? "ok" : "err unknown key";
   if (cmd == "homescreen") { consumer.press(AC_HOME); delay(40); consumer.release(); return "ok"; }
@@ -173,15 +190,19 @@ String board(const String &line, const String &id) {
 String statusJson(bool full) {
   static const char *apStates[] = {"idle", "connected", "streaming"};
   VideoStats v = video_stats();
-  char s[384];
+  char s[512];
   snprintf(s, sizeof s,
            "{\"up\":%lu,\"rst\":\"%s\",\"heap\":%u,\"psram\":%u,\"usb\":\"%s\",\"net\":\"%s\",\"ip\":\"%s\",\"sta\":%d,"
            "\"ap\":\"%s\",\"w\":%u,\"h\":%u,\"kbps\":%lu,\"fps\":%.1f,\"idr\":%lu,\"gop\":%lu,"
+           "\"cfg\":%lu,\"aus\":%lu,\"idrs\":%lu,\"nal\":%lu,\"aulen\":%lu,\"px\":%ld,\"py\":%ld,"
            "\"ble\":{\"mtu\":%u,\"phy\":%u,\"kbps\":%lu,\"drop\":%lu,\"rdrop\":%lu,\"n\":%d}}",
            millis(), resetReason(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), usbState(), net_mode(), net_ip().c_str(), net_peers(),
            apStates[airplay_state()], cfg_width(), cfg_height(), (unsigned long)v.kbps, v.fps, (unsigned long)v.idr_ms,
-           (unsigned long)v.gop_bytes, ble_mtu(), ble_phy(), (unsigned long)ble_kbps(), (unsigned long)ble_drops(),
+           (unsigned long)v.gop_bytes, (unsigned long)v.cfg_len, (unsigned long)v.rx_aus,
+           (unsigned long)v.idr_count, (unsigned long)v.last_nal, (unsigned long)v.last_au_len,
+           ptrx, ptry,
+           ble_mtu(), ble_phy(), (unsigned long)ble_kbps(), (unsigned long)ble_drops(),
            (unsigned long)ble_reply_drops(), ble_peers());
   if (full) return s;
   // MTU below ~250 (before the MTU exchange): keep only the fields the app needs to stay alive

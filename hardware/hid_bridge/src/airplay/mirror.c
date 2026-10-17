@@ -74,6 +74,12 @@ static void handle_codec(const uint8_t *p, size_t n) {
 
 static void handle_packet(const uint8_t *hdr, uint8_t *p, size_t n) {
   m.last_data_us = esp_timer_get_time();
+  // Diagnostic: never silently drop a packet type. Shows what the sender really delivers.
+  static uint32_t pkt_count, type_seen[256];
+  pkt_count++;
+  type_seen[hdr[4]]++;
+  if (pkt_count <= 48 || (pkt_count % 100) == 0)
+    ap_log("mirror: pkt #%lu type=0x%02x len=%u", (unsigned long)pkt_count, (unsigned)hdr[4], (unsigned)n);
   if (hdr[4] == 0x01) { handle_codec(p, n); return; }
   if (hdr[4] != 0x00 || !n) return;  // 0x02/0x05: heartbeat and streaming reports
   // the keystream continues across packets, as in mirror_buffer_decrypt()
@@ -114,6 +120,10 @@ static void mirror_task(void *arg) {
     if (m.tfd >= 0 && FD_ISSET(m.tfd, &rf)) {
       int k = recv(m.tfd, scratch, sizeof scratch, 0);
       if (k >= 32) memcpy(ntp + 8, scratch + 24, 8);  // echo the client's transmit time as reference
+      // Diagnostic: AirPlay senders can stall the video stream if timing is not answered.
+      static uint32_t ntp_rx;
+      if (k > 0) ap_log("mirror: ntp reply %d bytes (#%lu)", k, (unsigned long)++ntp_rx);
+      else ap_log("mirror: ntp recv %d (no reply)", k);
     }
     for (int i = 0; i < 2; i++)
       if (m.afd[i] >= 0 && FD_ISSET(m.afd[i], &rf)) recv(m.afd[i], scratch, sizeof scratch, 0);
@@ -130,6 +140,13 @@ static void mirror_task(void *arg) {
       ap_log("mirror: data connection closed");
       close_fd(&m.sfd);
       continue;
+    }
+    // Diagnostic: prove whether bytes arrive at all, independent of packet framing.
+    static uint32_t rx_total, rx_mark;
+    rx_total += k;
+    if (rx_total - rx_mark >= 16384) {
+      rx_mark = rx_total;
+      ap_log("mirror: %lu bytes rx", (unsigned long)rx_total);
     }
     got += k;
     if (got < need) continue;

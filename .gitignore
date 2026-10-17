@@ -10,6 +10,12 @@ __pycache__/
 hardware/hid_bridge/secrets.h
 
 # Build output
+.pio/
+.pio-core/
+.tmp/
+.uv-cache/
+.venv-tools/
+backups/
 hardware/build/
 hardware/hid_bridge/build/
 

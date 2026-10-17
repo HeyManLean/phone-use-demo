@@ -1,0 +1,33 @@
+// Local build settings for a FREE Apple Personal Team.
+// Fill in DEVELOPMENT_TEAM and IA_BUNDLE_ID, then open ios/IPhoneAgent.xcodeproj.
+//
+// Copy to Local.xcconfig (git-ignored). This file is a corrected version of
+// Local.xcconfig.example: that example ships IA_ENTITLEMENTS and IA_WIDGET_ENTITLEMENTS
+// PRE-FILLED even though its own comment says to leave them empty. Because Shared.xcconfig
+// includes Local.xcconfig last, copying the example verbatim silently turns on
+//   - App Groups            group.<bundle-id>
+//   - Hotspot Configuration (requires a PAID account)
+//   - Wi-Fi information     (requires a special entitlement)
+//   - time-sensitive notifications
+// and signing then fails on a free account with a capability/provisioning error.
+//
+// Leave both entitlement lines empty below. The app still works: without Hotspot
+// Configuration it prints the board's hotspot SSID and password so you can join manually
+// (HotspotJoin.swift, OnboardingPages.swift).
+
+// Your 10-character Apple Team ID. Find it at https://developer.apple.com/account
+// or in Xcode: Settings -> Accounts -> your Apple ID -> Manage Certificates.
+DEVELOPMENT_TEAM = PUT_YOUR_TEAM_ID_HERE
+
+// A bundle ID unique to you. The widget becomes <id>.activity.
+IA_BUNDLE_ID = com.example.esp32agent
+
+// Keep these EMPTY for a free Personal Team.
+IA_ENTITLEMENTS =
+IA_WIDGET_ENTITLEMENTS =
+
+// Optional: pre-fill the model endpoint so onboarding needs less typing.
+// The key is stored in the iOS keychain at runtime; never commit a real key.
+IA_PRESET_BASE_URL =
+IA_PRESET_MODEL =
+IA_PRESET_KEY =
