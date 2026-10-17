@@ -246,15 +246,27 @@ extension Pointer: Gestures {}
         if let metrics { trace?.writeMetrics(metrics.snapshot()) }
     }
 
+    /// Seconds to the last reply's first token (nil when the server did not stream). metrics keeps only the
+    /// latest request's value, which is how the round's screenshot cost gets into the per-round log.
+    private func firstToken() -> Double? {
+        guard let ms = metrics?.llmFirstMs, ms > 0 else { return nil }
+        return ms / 1000
+    }
+
     /// One see-think-act round (one or more actions). Returns true when the task is over.
     func step() async throws -> Bool {
         var timing = Metrics.Step()
+        let roundStart = now()
+        defer { timing.totalMs = (now() - roundStart) * 1000 }
         let acts = try await nextActions()
-        timing.llmMs = (acts[0].act["think_s"]?.double ?? 0) * 1000
+        let ask = acts[0].act
+        timing.llmMs = (ask["think_s"]?.double ?? 0) * 1000
+        timing.firstTokenMs = ask["first_token_s"]?.double.map { $0 * 1000 }
         let seen = acts[0].shot
+        timing.jpegKb = Double(seen?.count ?? 0) / 1024
         var spots = [pointerAt]  // where the pointer was and goes: pointer moves are not screen changes
         let stuck = repeating(acts[0].act)
-        defer { metrics?.step(timing) }
+        defer { metrics?.step(timing, actions: acts.count) }
         for (i, planned) in acts.enumerated() {
             var act = planned.act
             let name = act["action"]?.str ?? ""
@@ -284,6 +296,12 @@ extension Pointer: Gestures {}
                     steps[steps.count - 1]["changed"] = .bool(false)
                     return false  // skip the rest; the actor looks again
                 }
+            } else if isShortGesture(name), following != nil, following != "done" {
+                // Inside a round, the actions before the last do not each wait for the screen: the round's
+                // closing check reports the change, and only that wait looks for a frame newer than the
+                // last action. A brief pause is all iOS needs to register tap N before tap N+1. This is
+                // what made one round of six ticks cost six screen waits.
+                timing.frameMs += await pause()
             }
         }
         timing.frameMs += await settle()
@@ -297,6 +315,20 @@ extension Pointer: Gestures {}
         onDoing?(.looking)
         await screen?.afterAction(since: lastActed)
         return (now() - started) * 1000
+    }
+
+    /// A fixed pause between the actions of one round: no frame is fetched, only time for iOS to register
+    /// the gesture before the next one. Cheaper than the screen wait, and it leaves video bandwidth alone.
+    private func pause(_ s: Double = 0.12) async -> Double {
+        let started = now()
+        try? await Task.sleep(nanoseconds: UInt64(s * 1e9))
+        return (now() - started) * 1000
+    }
+
+    /// Actions whose next one cannot need a fresh screenshot: the model planned them from one screenshot
+    /// and sends them as one batch, so nothing in between forces a look.
+    private func isShortGesture(_ name: String) -> Bool {
+        name == "tap" || name == "type" || name == "key" || name == "swipe" || name == "path" || name == "circle"
     }
 
     /// The previous round changed nothing on screen, so a tap may have landed off target.
@@ -347,6 +379,8 @@ extension Pointer: Gestures {}
                 continue
             }
             acts[0]["think_s"] = .num(seconds)
+            let first = firstToken()
+            acts[0]["first_token_s"] = first.map { .num(($0 * 100).rounded() / 100) } ?? .null
             return acts.map { Planned(act: $0, shot: frame) }
         }
         throw Actions.ParseError(message: "actor gave no valid action: \(reply.prefix(200))")

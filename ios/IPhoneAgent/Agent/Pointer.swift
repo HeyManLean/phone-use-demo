@@ -27,6 +27,10 @@ import Foundation
     private var pos: (Int, Int)?  // pointer position in mouse units; nil = unknown
     private var moves = 0
     private var link = 0  // device.links when the pointer was last homed
+    /// The board answered `err unknown command` to a batched `drag`: do drags one command per point from now on.
+    private var batchedDragFails = false
+    /// Same for the one-write `tap` (move + click).
+    private var batchedTapFails = false
     /// where the pointer really landed (seen on screen) for the fraction we aimed at, per axis; a line fit
     /// through them corrects every later move, so taps get better as the agent works
     private(set) var seen: [String: [(Double, Double)]] = ["x": [], "y": []]
@@ -274,9 +278,27 @@ import Foundation
     func tap(_ x: Double, _ y: Double, aim: Bool = false) async throws {
         // With an absolute pointer aiming cannot land anywhere but the requested spot, so the
         // locate-and-correct pass is pointless: it would only add about a second per tap.
-        try await point(x, y, aim: false)
+        guard calibrated else { throw DeviceError(message: "pointer not calibrated") }
+        if link != device.links {  // new link: a dropped gesture may have left the button down
+            try await device.send("release")
+            (pos, link) = (nil, device.links)
+        }
+        let tx = dx(x), ty = dy(y)
+        pos = nil
+        if !batchedTapFails {  // one round trip for move + click, like `drag`
+            do {
+                try await device.send("tap \(tx) \(ty)")
+                (pos, moves) = ((tx, ty), moves + 1)
+                await Task.sleep(nanoseconds: UInt64(Self.tapGap * 1e9))
+                return
+            } catch let e where e.localizedDescription.contains("unknown command") {
+                batchedTapFails = true
+            }
+        }
+        try await device.send("moveabs \(tx) \(ty)")
+        (pos, moves) = ((tx, ty), moves + 1)
         try await device.send("click")
-        try await Task.sleep(nanoseconds: UInt64(Self.tapGap * 1e9))
+        await Task.sleep(nanoseconds: UInt64(Self.tapGap * 1e9))
     }
 
     func swipe(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double, hold: Bool = true) async throws {
@@ -285,7 +307,37 @@ import Foundation
 
     /// Press at the first point, move through the rest, release: one continuous stroke. hold rests at the end
     /// first, so lists and pickers stop exactly there; system gestures (home, back) need the flick.
+    ///
+    /// The whole stroke is one BLE write (`drag`, firmware with batched gestures): one round trip per drag
+    /// instead of one per point. A board without it answers `err unknown command` before any gesture is
+    /// sent, so the per-command path is still exact; later drags then skip the batched form.
     func drag(_ points: [CGPoint], hold: Bool = true) async throws {
+        guard !points.isEmpty else { return }
+        if link != device.links {  // new link: a dropped gesture may have left the button down
+            try await device.send("release")
+            (pos, link) = (nil, device.links)
+        }
+        if !batchedDragFails {
+            var nums: [Int] = [dx(Double(points[0].x)), dy(Double(points[0].y))]
+            for p in points.dropFirst() { nums.append(dx(Double(p.x))); nums.append(dy(Double(p.y))) }
+            // "hold" comes after every point: the firmware parses numbers until a word.
+            let cmd = "drag " + nums.map(String.init).joined(separator: " ") + (hold ? " hold" : "")
+            pos = nil
+            do {
+                try await device.send(cmd)
+            } catch let e where e.localizedDescription.contains("unknown command") {
+                batchedDragFails = true  // an older board: nothing was sent, so the fallback below is whole
+                log("board has no batched drag; one command per point")
+                try await strokeOneByOne(points, hold: hold)
+                return
+            }
+            return
+        }
+        try await strokeOneByOne(points, hold: hold)
+    }
+
+    /// The same stroke as separate commands: move to the start, press, move per point, rest, release.
+    private func strokeOneByOne(_ points: [CGPoint], hold: Bool) async throws {
         try await point(Double(points[0].x), Double(points[0].y))
         try await device.send("press")
         do {
@@ -305,6 +357,8 @@ import Foundation
         try await device.send("scroll \(lines) 0")
     }
 
+    /// The whole text in one write: the board's `type` walks its characters with no delay, and the app waits
+    /// once for the reply instead of once per character.
     func type(_ text: String) async throws { try await device.send("type \(text)") }
     func key(_ combo: String) async throws { try await device.send("key \(combo)") }
     /// The board's consumer-control Home key ("AC Home"), which iOS treats like a keyboard's home key. Boards

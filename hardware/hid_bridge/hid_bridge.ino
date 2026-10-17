@@ -3,7 +3,8 @@
 // iOS app on the same phone. It holds no logic; the app decides. Protocol: docs/ble-protocol.md.
 //
 // HID commands (unchanged from the old TCP protocol, the board answers "ok" or "err <why>"):
-//   ping | home | move <dx> <dy> | press | release | click
+//   ping | home | move <dx> <dy> | press | release | click | moveabs <x> <y> | tap <x> <y>
+//   drag <x1> <y1> <x2> <y2> ... [hold]  (one write for a whole stroke)
 //   scroll <v> <h> | type <ascii text> | key <combo, e.g. cmd+h, enter>
 //   homescreen (the consumer-control Home key, "AC Home": iOS goes to the Home Screen, like a keyboard's home key)
 
@@ -35,6 +36,8 @@ const long PTR_MAX = 65535;
 // One legacy `move` unit = 1/1500 of the screen, so an app that still sends relative moves keeps
 // working; `moveabs` is the precise path.
 const long MOVE_UNITS_PER_SCREEN = 1500;
+// Batched `drag`: ms rested between pointer reports of one stroke, so iOS sees separate moves, not a jump.
+const int DRAG_STEP_MS = 8;
 static long ptrx = 0, ptry = 0;  // current pointer position in 0..65535
 
 USBHIDAbsoluteMouse mouse;
@@ -99,6 +102,28 @@ bool usbReady() {
   return tud_mounted() && !tud_suspended();
 }
 
+// Parses up to MAXP decimal numbers from `s` into `out`; returns how many. Used by the batched gestures,
+// where every extra BLE round trip of a multi-tap or a drawing stroke costs a round-trip time on top of
+// the video share, so the app sends them as one command.
+const int MAXP = 40;
+static int parsePoints(const String &s, long *out) {
+  int n = 0;
+  const char *p = s.c_str();
+  while (n < MAXP) {
+    while (*p == ' ') p++;
+    if (!*p || !(*p == '-' || (*p >= '0' && *p <= '9'))) break;
+    char *end = nullptr;
+    out[n++] = strtol(p, &end, 10);
+    if (end == p) break;
+    p = end;
+  }
+  return n;
+}
+
+// True when the rest of the arguments is the word "hold" (the app's marker for a gesture that rests at its
+// last point: a drag ends there, like a finger that stops before lifting, so no momentum).
+static bool hasHold(const String &s) { return s.indexOf("hold") >= 0; }
+
 String run(const String &line) {
   int sp = line.indexOf(' ');
   String cmd = sp < 0 ? line : line.substring(0, sp);
@@ -117,6 +142,27 @@ String run(const String &line) {
   if (cmd == "press") { mouse.press(MOUSE_LEFT); return "ok"; }
   if (cmd == "release") { mouse.release(MOUSE_LEFT); return "ok"; }
   if (cmd == "click") { mouse.press(MOUSE_LEFT); delay(60); mouse.release(MOUSE_LEFT); return "ok"; }
+  if (cmd == "tap") {                                            // move + click in one write
+    ptrSet((long)constrain(a, 0L, 65535L), (long)constrain(b, 0L, 65535L));
+    mouse.press(MOUSE_LEFT);
+    delay(60);
+    mouse.release(MOUSE_LEFT);
+    return "ok";
+  }
+  if (cmd == "drag") {                                           // press, stroke through x y pairs, release
+    static long p[MAXP];
+    int n = parsePoints(arg, p);                                 // stops at "hold": the pairs before it
+    if (n < 4 || n % 2) return "err usage: drag x1 y1 x2 y2 ... [hold]";
+    ptrSet(constrain(p[0], 0L, 65535L), constrain(p[1], 0L, 65535L));
+    mouse.press(MOUSE_LEFT);
+    for (int i = 2; i + 1 < n; i += 2) {
+      ptrSet(constrain(p[i], 0L, 65535L), constrain(p[i + 1], 0L, 65535L));
+      delay(DRAG_STEP_MS);
+    }
+    if (hasHold(arg)) delay(250);  // rest at the end: lists and pickers stop exactly here
+    mouse.release(MOUSE_LEFT);
+    return "ok";
+  }
   if (cmd == "scroll") { mouse.move(absw(ptrx), absw(ptry), a, b); return "ok"; }
   if (cmd == "type") { keyboard.print(arg); return "ok"; }
   if (cmd == "key") return pressCombo(arg) ? "ok" : "err unknown key";

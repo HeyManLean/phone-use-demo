@@ -28,3 +28,7 @@ hardware/hid_bridge/build/
 hardware/tests/test
 hardware/tests/test.dSYM/
 hardware/tools/out/
+
+# Feishu MCP secrets (skill installed outside the repo, kept out of git anyway)
+config.local.json
+

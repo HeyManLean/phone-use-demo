@@ -8,6 +8,9 @@
 - Prompts moved to `prompts/`.
 - Product name: ESP32 Agent.
 - `server/` is legacy and no longer needed.
+- Faster rounds: a batched round of actions waits for the screen once (at its end), not after every action;
+  taps and drags are one BLE round trip (`tap`, `drag` commands — older firmware falls back to the
+  per-command form), and Diagnostics shows each round's total time, action count and screenshot size.
 
 ## v0.1.0
 

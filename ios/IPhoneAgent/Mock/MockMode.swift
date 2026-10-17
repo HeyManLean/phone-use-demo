@@ -36,7 +36,9 @@ extension AppModel {
                 if n % 3 == 0 {
                     self.metrics.llm(first: Double.random(in: 0.35...0.6), total: Double.random(in: 1.2...2.1))
                     self.metrics.step(Metrics.Step(frameMs: .random(in: 300...520), llmMs: .random(in: 1200...2100),
-                                                   hidMs: .random(in: 250...700)))
+                                                   hidMs: .random(in: 250...700), actions: Int.random(in: 1...3),
+                                                   totalMs: .random(in: 2000...3400), jpegKb: .random(in: 28...44),
+                                                   firstTokenMs: .random(in: 350...600)), actions: Int.random(in: 1...3))
                     self.metrics.hidMs = ["move": .random(in: 18...40), "click": .random(in: 9...16)]
                 }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)

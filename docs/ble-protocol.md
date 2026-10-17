@@ -21,6 +21,14 @@ Full UUID = `6e400001-a9e8-4b1b-9c39-6d6f8a3c` + 4-hex suffix, e.g. cmd = `6e400
 Existing HID commands, unchanged semantics from the old TCP protocol:
 `ping`, `home`, `move DX DY`, `press`, `release`, `click`, `scroll A B`, `type TEXT`, `key COMBO`.
 New:
+- `moveabs X Y` — absolute pointer position, 0..65535 per axis.
+- `tap X Y` — `moveabs` + `click` in one write: one BLE round trip instead of two. An older board answers
+  `err unknown command` and nothing moves; the app then falls back to `moveabs` + `click`.
+- `drag X1 Y1 X2 Y2 ... [hold]` — press at the first point, move through the rest, release: a whole swipe or
+  drawing stroke in one write, so a 24-point circle costs one round trip instead of 26. `hold` (after the
+  numbers) rests 250 ms before releasing, so lists and pickers stop exactly where the finger stopped. Up to
+  20 points. An older board answers `err unknown command` without touching the pointer; the app falls back to
+  `press` / `moveabs`… / `release`.
 - `stream on|off` — continuously forward every access unit over `video` (default off).
 - `snap` — send SPS/PPS + every AU since the last IDR (the current GOP), then reply `ok`.
 - `res W H` — AirPlay resolution advertised in `/info` (default 480 1040), stored in NVS; takes effect on the next mirroring session.

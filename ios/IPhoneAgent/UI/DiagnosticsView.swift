@@ -43,7 +43,10 @@ struct DiagnosticsView: View {
                 row("LLM first token / total", "\(f(metrics.llmFirstMs)) / \(f(metrics.llmTotalMs)) ms")
                 row("LLM ping", f(metrics.llmPingMs) + " ms")
                 if let s = metrics.steps.last {
-                    row("Last step frame / LLM / HID", "\(f(s.frameMs)) / \(f(s.llmMs)) / \(f(s.hidMs)) ms")
+                    row("Last round total", f(s.totalMs) + " ms")
+                    row("Screen / model / HID", "\(f(s.frameMs)) / \(f(s.llmMs)) / \(f(s.hidMs)) ms")
+                    row("Actions in round", "\(s.actions)")
+                    row("Screenshot sent / first token", f(s.jpegKb) + " KB / " + f(s.firstTokenMs) + " ms")
                 }
                 ForEach(metrics.hidMs.keys.sorted(), id: \.self) { k in row("HID \(k)", f(metrics.hidMs[k]) + " ms") }
             }

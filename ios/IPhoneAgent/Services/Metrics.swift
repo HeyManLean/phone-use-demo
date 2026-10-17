@@ -2,7 +2,13 @@ import Foundation
 
 /// Live numbers for the Diagnostics page; a snapshot goes into every trace (metrics.json).
 @MainActor final class Metrics: ObservableObject {
-    struct Step: Codable { var frameMs = 0.0, llmMs = 0.0, hidMs = 0.0 }
+    struct Step: Codable {
+        var frameMs = 0.0, llmMs = 0.0, hidMs = 0.0
+        var actions = 1        // actions the model batched into this round
+        var totalMs = 0.0      // the whole round: screen → model → gestures → screen
+        var jpegKb = 0.0       // the screenshot sent (JPEG, before base64)
+        var firstTokenMs: Double?
+    }
 
     // board, from status
     @Published var board: BoardStatus?
@@ -61,10 +67,12 @@ import Foundation
         llmFirstMs = first.map { $0 * 1000 }
         llmTotalMs = total * 1000
     }
-    func step(_ s: Step) {
+    func step(_ s: Step, actions: Int = 1) {
+        var s = s
+        s.actions = actions
         steps = Array((steps + [s]).suffix(40))
-        DebugLog.write(String(format: "step %d timing: frame %.0f ms, LLM %.0f ms, HID %.0f ms", steps.count, s.frameMs,
-                              s.llmMs, s.hidMs))
+        DebugLog.write(String(format: "step %d: %.1f s total (screen %.0f ms, model %.0f ms, %d action(s) %.0f ms), image %d KB",
+                              steps.count, s.totalMs / 1000, s.frameMs, s.llmMs, actions, s.hidMs, Int(s.jpegKb)))
     }
 
     /// Called every second by a timer; also detects suspension (a gap far longer than the tick).
@@ -89,7 +97,10 @@ import Foundation
             "ble_kbps_app": bleKbps, "mtu": mtu, "drops": drops, "fps": fps, "decode_ms": decodeMs,
             "decode_errors": decodeErrors, "background_decode_errors": backgroundDecodeErrors,
             "background_alive_s": backgroundAlive, "suspensions": suspensions, "hid_ms": hidMs,
-            "steps": steps.map { ["frame_ms": $0.frameMs, "llm_ms": $0.llmMs, "hid_ms": $0.hidMs] },
+            "steps": steps.map {
+                ["frame_ms": $0.frameMs, "llm_ms": $0.llmMs, "hid_ms": $0.hidMs, "total_ms": $0.totalMs,
+                 "actions": $0.actions, "jpeg_kb": $0.jpegKb, "first_token_ms": $0.firstTokenMs ?? -1]
+            },
         ]
         out["bench_kbps"] = benchKbps
         out["idr_interval_ms"] = idrIntervalMs
