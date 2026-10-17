@@ -132,6 +132,14 @@ String run(const String &line) {
   long a = 0, b = 0;
   sscanf(arg.c_str(), "%ld %ld", &a, &b);
 
+  // Validate before touching USB: a malformed gesture must not move a pointer or press a button.
+  static long pts[MAXP];
+  int np = 0;
+  if (cmd == "drag") {
+    np = parsePoints(arg, pts);
+    if (np < 4 || np % 2) return "err usage: drag x1 y1 x2 y2 ... [hold] (1-64 points)";
+  }
+
   if (cmd == "ping") return "ok";
   if (!usbReady()) return "err phone usb asleep (unlock the phone)";
   if (cmd == "home") { ptrSet(0, 0); return "ok"; }              // absolute: exact top-left
@@ -151,16 +159,13 @@ String run(const String &line) {
     return "ok";
   }
   if (cmd == "drag") {                                           // press, stroke through x y pairs, release
-    static long p[MAXP];
-    int n = parsePoints(arg, p);                                 // stops at "hold": the pairs before it
-    if (n < 4 || n % 2) return "err usage: drag x1 y1 x2 y2 ... [hold]";
-    ptrSet(constrain(p[0], 0L, 65535L), constrain(p[1], 0L, 65535L));
+    ptrSet(constrain(pts[0], 0L, PTR_MAX), constrain(pts[1], 0L, PTR_MAX));
     delay(20);  // let iOS observe the start position before the button transition
     mouse.press(MOUSE_LEFT);
     delay(40);  // establish a drag before moving
-    for (int i = 2; i + 1 < n; i += 2) {
+    for (int i = 2; i + 1 < np; i += 2) {
       const long x0 = ptrx, y0 = ptry;
-      const long x1 = constrain(p[i], 0L, PTR_MAX), y1 = constrain(p[i + 1], 0L, PTR_MAX);
+      const long x1 = constrain(pts[i], 0L, PTR_MAX), y1 = constrain(pts[i + 1], 0L, PTR_MAX);
       // At most 2% of a screen per report. Even a short two-point swipe gets a
       // continuous 120 ms stroke; longer segments take proportionally longer.
       const long distance = max(labs(x1 - x0), labs(y1 - y0));

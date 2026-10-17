@@ -13,6 +13,8 @@
 - The decoder now gives every sample buffer a timing entry: a frame without one can be held until the next
   arrives, which is exactly the case after a tap, so the change the agent is waiting for never showed up.
 - A batch of gestures pauses 250 ms (was 120 ms) between its actions, so iOS cannot merge or drop a tap.
+- A malformed `drag` is now rejected before any USB work: previously it could still move the pointer
+  or leave the button down, because the arguments were validated after the USB check.
 - Firmware build, host drag/parser regression and Swift syntax checks pass; iOS type checking,
   XCTest and actual target-hit/drag behavior still need Mac/device validation.
 
