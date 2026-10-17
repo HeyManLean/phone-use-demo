@@ -289,7 +289,7 @@ import Foundation
             do {
                 try await device.send("tap \(tx) \(ty)")
                 (pos, moves) = ((tx, ty), moves + 1)
-                await Task.sleep(nanoseconds: UInt64(Self.tapGap * 1e9))
+                try await Task.sleep(nanoseconds: UInt64(Self.tapGap * 1e9))
                 return
             } catch let e where e.localizedDescription.contains("unknown command") {
                 batchedTapFails = true
@@ -298,7 +298,7 @@ import Foundation
         try await device.send("moveabs \(tx) \(ty)")
         (pos, moves) = ((tx, ty), moves + 1)
         try await device.send("click")
-        await Task.sleep(nanoseconds: UInt64(Self.tapGap * 1e9))
+        try await Task.sleep(nanoseconds: UInt64(Self.tapGap * 1e9))
     }
 
     func swipe(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double, hold: Bool = true) async throws {
