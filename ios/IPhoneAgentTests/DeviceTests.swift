@@ -101,15 +101,36 @@ import XCTest
         XCTAssertEqual(s.fps, 4.8)
     }
 
-    func testPointerRehomesEveryTenGestures() async throws {
+    func testAbsolutePointerNeverRehomesOrUsesRelativeUnits() async throws {
         let device = FakeDevice()
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
         let pointer = Pointer(device: device, calibrationFile: file)
-        pointer.finishCalibration(x: 0.5, y: 0.25)  // span 400 x 800
+        pointer.finishCalibration(x: 0.5, y: 0.25)
         for _ in 0..<11 { try await pointer.point(0.5, 0.5) }
-        XCTAssertEqual(device.sent.filter { $0 == "home" }.count, 2)
-        XCTAssertEqual(device.sent[0], "release")  // a new link: let go first
-        XCTAssertEqual(device.sent[2], "move 200 400")
+        XCTAssertEqual(device.sent.first, "release")
+        XCTAssertEqual(device.sent.filter { $0 == "moveabs 32768 32768" }.count, 11)
+        XCTAssertFalse(device.sent.contains("home"))
+        XCTAssertEqual(pointer.span, Pointer.Span(w: 65535, h: 65535))
+    }
+
+    func testAbsoluteCoordinateRangeAndModelUnits() {
+        XCTAssertEqual(Pointer.absoluteCoordinate(-1), 0)
+        XCTAssertEqual(Pointer.absoluteCoordinate(2), 65535)
+        XCTAssertEqual(Pointer.absoluteCoordinate(0.516), 33816)
+        XCTAssertEqual(Pointer.absoluteCoordinate(0.785), 51445)
+        XCTAssertEqual(Pointer.absoluteCoordinate(.nan), 0)
+    }
+
+    func testOldCalibrationCannotSkewAbsoluteTap() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        let legacy = #"{"w":400,"h":800,"seen":{"x":[[0.2,0.25],[0.8,0.85]],"y":[[0.2,0.23],[0.8,0.83]]},"quality":0.01,"aspect":0.46}"#
+        try Data(legacy.utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let device = FakeDevice()
+        let pointer = Pointer(device: device, calibrationFile: file)
+        try await pointer.tap(0.516, 0.785)
+        XCTAssertTrue(device.sent.contains("tap 33816 51445"))
+        XCTAssertEqual(pointer.drift, 0)
     }
 
     func testShortStatusNotifyIsMergedWithTheFullRead() throws {
@@ -128,11 +149,11 @@ import XCTest
     func testFreshCalibrationHasNoDriftAndSurvivesARestart() {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
         let pointer = Pointer(device: FakeDevice(), calibrationFile: file)
-        XCTAssertFalse(pointer.calibrated)
+        XCTAssertTrue(pointer.calibrated)
         pointer.finishCalibration(x: 0.5, y: 0.25)
         XCTAssertEqual(pointer.drift, 0)
         let again = Pointer(device: FakeDevice(), calibrationFile: file)
-        XCTAssertEqual(again.span, Pointer.Span(w: 400, h: 800))
+        XCTAssertEqual(again.span, Pointer.Span(w: 65535, h: 65535))
     }
 
     func testModelSettingsNeedOnlyAnEndpoint() {

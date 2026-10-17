@@ -115,8 +115,8 @@ import UIKit
             do {
                 switch try await touchCalibrate(full: true) {
                 case .done(let error): return finished(error)
-                case .noTaps: noTaps = true
-                case .failed(let why): app.say("calibration: touch probe failed: \(why)")
+                case .noTaps: return failed(Self.noTapsText)
+                case .failed(let why): return failed(why)
                 }
             } catch {
                 if Task.isCancelled { return }
@@ -193,7 +193,7 @@ import UIKit
         current = Task {
             do {
                 try await app.pointer.reset()
-                try await app.board.commands.send("move \(Pointer.calibrationMove) \(Pointer.calibrationMove)")
+                try await app.pointer.point(0.3, 0.3)
             } catch {
                 return failed(error.localizedDescription)
             }

@@ -13,6 +13,35 @@ extension AutoCalibrator {
     static let tapTimeout = 3.0
 
     func touchCalibrate(full: Bool) async throws -> TouchResult {
+        let pointer = app.pointer, probe = app.probe
+        let targets = full ? Self.targets + [(Self.check.x, Self.check.y)] : [(Self.check.x, Self.check.y)]
+        var worst = 0.0
+        phase = .verifying
+        for (index, target) in targets.enumerated() {
+            try Task.checkCancellation()
+            try await pointer.point(target.0, target.1)
+            // The probe measures real UIKit touch delivery, not board coordinate bookkeeping.
+            try await Task.sleep(nanoseconds: 100_000_000)
+            let sent = now()
+            try await app.board.commands.send("click")
+            guard let landed = await probe.tap(since: sent, timeout: Self.tapTimeout) else {
+                return .noTaps
+            }
+            let error = max(abs(landed.x - target.0), abs(landed.y - target.1))
+            worst = max(worst, error)
+            progress = Progress(done: index + 1, total: targets.count)
+            app.say(String(format: "absolute probe: target (%.3f, %.3f), landed (%.3f, %.3f), error %.2f%%",
+                           target.0, target.1, landed.x, landed.y, error * 100))
+        }
+        pointer.setQuality(worst)
+        guard worst <= Self.tolerance else {
+            return .failed(String(format: "Absolute pointer landing error %.2f%%; mapping needs investigation", worst * 100))
+        }
+        return .done(worst)
+    }
+
+    /// Retained for reference only; relative mouse units must not be used with absolute firmware.
+    private func legacyTouchCalibrate(full: Bool) async throws -> TouchResult {
         let probe = app.probe, device = app.board.commands, pointer = app.pointer
         var total = full ? Self.roughStops.count + Self.targets.count + 1 : 1
         var clicks = 0, hits = 0

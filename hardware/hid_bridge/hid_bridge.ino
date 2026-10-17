@@ -105,19 +105,20 @@ bool usbReady() {
 // Parses up to MAXP decimal numbers from `s` into `out`; returns how many. Used by the batched gestures,
 // where every extra BLE round trip of a multi-tap or a drawing stroke costs a round-trip time on top of
 // the video share, so the app sends them as one command.
-const int MAXP = 40;
+const int MAXP = 128;  // 64 points; the app's default circle has 25 points
 static int parsePoints(const String &s, long *out) {
   int n = 0;
   const char *p = s.c_str();
-  while (n < MAXP) {
+  for (;;) {
     while (*p == ' ') p++;
-    if (!*p || !(*p == '-' || (*p >= '0' && *p <= '9'))) break;
+    if (!*p || !strcmp(p, "hold")) return n;
+    if (n == MAXP || !(*p == '-' || (*p >= '0' && *p <= '9'))) return -1;
     char *end = nullptr;
-    out[n++] = strtol(p, &end, 10);
-    if (end == p) break;
+    long value = strtol(p, &end, 10);
+    if (end == p || (*end && *end != ' ') || value < 0 || value > PTR_MAX) return -1;
+    out[n++] = value;
     p = end;
   }
-  return n;
 }
 
 // True when the rest of the arguments is the word "hold" (the app's marker for a gesture that rests at its
@@ -154,10 +155,20 @@ String run(const String &line) {
     int n = parsePoints(arg, p);                                 // stops at "hold": the pairs before it
     if (n < 4 || n % 2) return "err usage: drag x1 y1 x2 y2 ... [hold]";
     ptrSet(constrain(p[0], 0L, 65535L), constrain(p[1], 0L, 65535L));
+    delay(20);  // let iOS observe the start position before the button transition
     mouse.press(MOUSE_LEFT);
+    delay(40);  // establish a drag before moving
     for (int i = 2; i + 1 < n; i += 2) {
-      ptrSet(constrain(p[i], 0L, 65535L), constrain(p[i + 1], 0L, 65535L));
-      delay(DRAG_STEP_MS);
+      const long x0 = ptrx, y0 = ptry;
+      const long x1 = constrain(p[i], 0L, PTR_MAX), y1 = constrain(p[i + 1], 0L, PTR_MAX);
+      // At most 2% of a screen per report. Even a short two-point swipe gets a
+      // continuous 120 ms stroke; longer segments take proportionally longer.
+      const long distance = max(labs(x1 - x0), labs(y1 - y0));
+      const int steps = max(15L, (distance + 1310L - 1) / 1310L);
+      for (int step = 1; step <= steps; step++) {
+        ptrSet(x0 + (x1 - x0) * step / steps, y0 + (y1 - y0) * step / steps);
+        delay(DRAG_STEP_MS);
+      }
     }
     if (hasHold(arg)) delay(250);  // rest at the end: lists and pickers stop exactly here
     mouse.release(MOUSE_LEFT);

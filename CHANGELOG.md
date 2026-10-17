@@ -2,6 +2,15 @@
 
 ## Unreleased (main)
 
+- Absolute-pointer fixes: ignore legacy relative calibration files; map normalized model targets
+  directly to 0..65535 and log the target/report coordinates. Calibration checks actual UIKit
+  touch landings without changing the fixed report range.
+- Batched drags now have a button-down dwell and intermediate held reports instead of a single
+  endpoint jump. Support up to 64 points (including the default 25-point circle); reject overflow
+  or malformed trailing arguments before moving.
+- Firmware build, host drag/parser regression and Swift syntax checks pass; iOS type checking,
+  XCTest and actual target-hit/drag behavior still need Mac/device validation.
+
 - No computer: the ESP32 is the AirPlay receiver (ported from UxPlay) with its own hotspot, and talks to a new
   iPhone app over BLE. The app is the agent: planner/actor loop, pointer calibration, run replay, Live Activity,
   widgets, Siri and Shortcuts, self-healing when the board, hotspot or mirroring drops.

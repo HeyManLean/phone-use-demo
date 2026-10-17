@@ -1,10 +1,8 @@
 import Foundation
 
-/// Touch-like gestures on the phone, built from relative mouse moves. Port of phone.py.
-///
-/// The pointer is relative, so the app tracks where it is (in mouse units) and moves from there; every few
-/// gestures it slams it into the top-left corner (`home`) again to cancel drift. Coordinates are fractions of
-/// the screen (0..1, origin top-left), so they work for any frame size.
+/// Touch-like gestures using absolute USB HID coordinates.
+/// Targets are fractions of the decoded screen (0..1, origin top-left). The fixed
+/// report range avoids relative-unit calibration, but real iOS landings must still be verified.
 @MainActor final class Pointer: ObservableObject {
     static let calibrationMove = 200        // mouse units moved diagonally for a manual (one point) calibration
     static let calibrationStops = [150, 350]  // automatic calibration finds the pointer at these distances
@@ -46,16 +44,12 @@ import Foundation
         self.device = device
         self.file = calibrationFile
         self.screen = screen
-        if let data = try? Data(contentsOf: calibrationFile), let saved = try? JSONDecoder().decode(Saved.self, from: data) {
-            span = Span(w: saved.w, h: saved.h)
-            (quality, aspect) = (saved.quality, saved.aspect)
-            for axis in ["x", "y"] {
-                seen[axis] = (saved.seen?[axis] ?? []).filter { $0.count == 2 }.map { ($0[0], $0[1]) }.suffix(12)
-            }
-        }
-        // The board reports an absolute pointer mapped over the whole screen, so the coordinate space
-        // is fixed at 0..65535 and no calibration is needed: span is just the report's range.
+        // Relative-mouse calibration files have incompatible units. Never load their span or
+        // learned offsets into the absolute report mapping.
         span = Span(w: Self.absMax, h: Self.absMax)
+        seen = ["x": [], "y": []]
+        quality = nil
+        aspect = nil
     }
 
     var calibrated: Bool { span != nil }
@@ -135,8 +129,8 @@ import Foundation
 
     /// x, y: where the pointer ended up after startCalibration() (one point, picked by the user).
     func finishCalibration(x: Double, y: Double) {
-        (quality, aspect) = (nil, screenAspect())
-        span = Span(w: Int((Double(Self.calibrationMove) / x).rounded(.toNearestOrEven)), h: Int((Double(Self.calibrationMove) / y).rounded(.toNearestOrEven)))
+        (quality, aspect) = (max(abs(x - 0.3), abs(y - 0.3)), screenAspect())
+        span = Span(w: Self.absMax, h: Self.absMax)
         seen = ["x": [], "y": []]
         save()
     }
@@ -144,18 +138,13 @@ import Foundation
     /// Touch-probe result: per-axis lines landed = a * units + b fitted from taps the app caught itself.
     /// The span is 1/a; every probe becomes a landing sample, so `fix` also corrects the offset b.
     func applyProbe(x: ProbeFit.Line, y: ProbeFit.Line, samples: [(ux: Double, uy: Double, fx: Double, fy: Double)]) {
-        let s = Span(w: Int((1 / x.a).rounded()), h: Int((1 / y.a).rounded()))
-        span = s
+        // Legacy probe fits are expressed in relative mouse units and cannot change this mapping.
+        span = Span(w: Self.absMax, h: Self.absMax)
         (quality, aspect) = (max(x.rms, y.rms), screenAspect())
         seen = ["x": [], "y": []]
-        for p in samples {
-            remember("x", (p.ux / Double(s.w), p.fx))
-            remember("y", (p.uy / Double(s.h), p.fy))
-        }
         pos = nil
         save()
-        log(String(format: "calibration: touch probe span %d x %d, offset %.3f / %.3f, residual %.2f%%",
-                   s.w, s.h, x.b, y.b, max(x.rms, y.rms) * 100))
+        log("calibration: ignored legacy relative fit; absolute range remains 65535")
     }
 
     /// A measured check (e.g. a probe tap) as the current accuracy.
@@ -175,7 +164,8 @@ import Foundation
     func point(_ x: Double, _ y: Double, aim: Bool = false) async throws {
         guard calibrated else { throw DeviceError(message: "pointer not calibrated") }
         try await moveTo(dx(x), dy(y))
-        if aim && screen != nil { try await self.aim(x, y) }
+        // Aim is diagnostic only for absolute HID; never issue corrections in legacy move units.
+        if aim && screen != nil { _ = try await verify(x: x, y: y) }
     }
 
     /// Closed loop: find the real pointer on screen, fix a miss, and learn the error for later moves.
@@ -199,18 +189,17 @@ import Foundation
     /// Wiggle the pointer and find it on screen, near the target first, then anywhere. model: ask the vision
     /// model when the pixels don't show it (~20 s, rarely right); a tap's aim never waits for that.
     private func measure(_ x: Double, _ y: Double, model: Bool = true) async throws -> CGPoint? {
-        guard let screen, let span else { return nil }
-        let nudge = x < 0.9 ? Self.nudge : -Self.nudge  // stay clear of the screen edge
-        await screen.settled(quiet: 0.15, least: 0.1, most: 0.6)  // pointer at rest
+        guard let screen else { return nil }
+        let shift = x < 0.9 ? 0.012 : -0.012
+        await screen.settled(quiet: 0.15, least: 0.1, most: 0.6)
         let before = screen.frame, sent = now()
-        try await device.send("move \(nudge) 0")
+        try await device.send("moveabs \(dx(x + shift)) \(dy(y))")
         var after = await screen.fresh(since: sent, timeout: 1.2)
         if after != nil {
             await screen.settled(quiet: 0.1, least: 0.05, most: 0.4)
             after = screen.frame
         }
-        try await device.send("move \(-nudge) 0")
-        let shift = Double(nudge) / Double(span.w)
+        try await device.send("moveabs \(dx(x)) \(dy(y))")
         guard let before, let after else { return nil }
         if let p = Vision.pointer(before, after, near: CGPoint(x: x, y: y), shift: shift)
             ?? Vision.pointer(before, after, near: CGPoint(x: 0.5, y: 0.5), shift: shift, reach: CGPoint(x: 0.5, y: 0.5)) {
@@ -284,6 +273,7 @@ import Foundation
             (pos, link) = (nil, device.links)
         }
         let tx = dx(x), ty = dy(y)
+        log(String(format: "absolute tap: model %.1f,%.1f (0-1000) -> HID %d,%d", x * 1000, y * 1000, tx, ty))
         pos = nil
         if !batchedTapFails {  // one round trip for move + click, like `drag`
             do {
@@ -376,6 +366,11 @@ import Foundation
         pos = nil
     }
 
-    private func dx(_ x: Double) -> Int { Int((min(max(fix(x, "x"), 0), 1) * Double(span!.w)).rounded(.toNearestOrEven)) }
-    private func dy(_ y: Double) -> Int { Int((min(max(fix(y, "y"), 0), 1) * Double(span!.h)).rounded(.toNearestOrEven)) }
+    /// Fixed absolute report mapping: model coordinates are normalized before reaching Pointer.
+    static func absoluteCoordinate(_ fraction: Double) -> Int {
+        guard fraction.isFinite else { return 0 }
+        return Int((min(max(fraction, 0), 1) * Double(absMax)).rounded(.toNearestOrEven))
+    }
+    private func dx(_ x: Double) -> Int { Self.absoluteCoordinate(x) }
+    private func dy(_ y: Double) -> Int { Self.absoluteCoordinate(y) }
 }
