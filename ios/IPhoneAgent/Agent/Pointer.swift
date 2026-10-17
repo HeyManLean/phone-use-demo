@@ -168,7 +168,7 @@ import Foundation
         if aim && screen != nil { _ = try await verify(x: x, y: y) }
     }
 
-    /// Closed loop: find the real pointer on screen, fix a miss, and learn the error for later moves.
+    /// Kept for reference only; relative mouse corrections must not run on absolute firmware.
     private func aim(_ x: Double, _ y: Double) async throws {
         guard let span, let found = try await measure(x, y, model: false) else {
             log(String(format: "aim (%.3f, %.3f): pointer not found", x, y))

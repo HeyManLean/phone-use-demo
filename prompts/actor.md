@@ -28,7 +28,7 @@ Actions:
   tap X Y [precise]         (precise: the pointer is located and corrected before tapping, about 1 s slower;
                              use it for small or tightly packed targets: list rows, checkmarks, toggles, small icons)
   swipe X1 Y1 X2 Y2         (finger moves from X1,Y1 to X2,Y2: "swipe down" means Y2 > Y1)
-  path X1 Y1 X2 Y2 X3 Y3 …  (one continuous stroke through 2-20 points, for drawing)
+  path X1 Y1 X2 Y2 X3 Y3 …  (one continuous stroke through 2-64 points, for drawing)
   circle X Y R              (draw a circle centered at X Y; R is the radius in x units)
   type TEXT                 (ASCII only; tap the input field first)
   key COMBO                 (enter, backspace, esc, cmd+a, ...)

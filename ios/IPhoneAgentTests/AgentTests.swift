@@ -129,6 +129,14 @@ import XCTest
         XCTAssertNil(try Actions.parseCommand("tap 120 640")["precise"])
     }
 
+    func testActorPromptDescribesTheAbsolutePointer() {
+        let prompt = Prompts.actor
+        XCTAssertTrue(prompt.contains("The pointer is absolute"))
+        XCTAssertTrue(prompt.contains("no drift"))
+        // The upstream wording is still kept for the record, but not as the active instruction.
+        XCTAssertTrue(prompt.contains(Prompts.actorServer))
+    }
+
     // MARK: - beyond the Python tests
 
     func testHistoryIsFormattedLikePythonJSONDumps() async throws {

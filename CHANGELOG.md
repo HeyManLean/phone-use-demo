@@ -8,6 +8,8 @@
 - Batched drags now have a button-down dwell and intermediate held reports instead of a single
   endpoint jump. Support up to 64 points (including the default 25-point circle); reject overflow
   or malformed trailing arguments before moving.
+- The actor prompt now states that the pointer is absolute (a tap lands where the coordinates say),
+  instead of the upstream relative-mouse wording; `path` accepts up to 64 points like the firmware.
 - Firmware build, host drag/parser regression and Swift syntax checks pass; iOS type checking,
   XCTest and actual target-hit/drag behavior still need Mac/device validation.
 

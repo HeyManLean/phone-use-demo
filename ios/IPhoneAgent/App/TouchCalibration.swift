@@ -20,8 +20,6 @@ extension AutoCalibrator {
         for (index, target) in targets.enumerated() {
             try Task.checkCancellation()
             try await pointer.point(target.0, target.1)
-            // The probe measures real UIKit touch delivery, not board coordinate bookkeeping.
-            try await Task.sleep(nanoseconds: 100_000_000)
             let sent = now()
             try await app.board.commands.send("click")
             guard let landed = await probe.tap(since: sent, timeout: Self.tapTimeout) else {
