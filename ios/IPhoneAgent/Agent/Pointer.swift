@@ -51,7 +51,7 @@ import Foundation
         }
         // The board reports an absolute pointer mapped over the whole screen, so the coordinate space
         // is fixed at 0..65535 and no calibration is needed: span is just the report's range.
-        span = Span(w: Point.absMax, h: Point.absMax)
+        span = Span(w: Self.absMax, h: Self.absMax)
     }
 
     var calibrated: Bool { span != nil }
