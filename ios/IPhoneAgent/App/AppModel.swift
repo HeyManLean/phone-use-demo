@@ -91,8 +91,15 @@ import UIKit
         pointer.log = say
         pointer.screenAspect = { DeviceScreen.aspect }
         pointer.locate = { [weak self] jpeg in await self?.locatePointer(jpeg) }
+        // The relay runs on the caller's thread, and some callers are not on the main actor (MetricKit hands
+        // diagnostics over on a background queue). assumeIsolated traps off the main thread, so hop over.
         DebugLog.relay = { [weak self] line in
-            MainActor.assumeIsolated { if !MockMode.on { self?.board.commands.relayLog(line) } }
+            guard !MockMode.on else { return }
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { self?.board.commands.relayLog(line) }
+            } else {
+                Task { @MainActor in _ = self?.board.commands.relayLog(line) }
+            }
         }
         board.commands.onAppCommand = { [weak self] line in self?.handleAppCommand(line) }
         DebugLog.write("app launched \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "")"
