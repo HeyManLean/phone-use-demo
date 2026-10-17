@@ -133,9 +133,13 @@ final class H264Decoder: @unchecked Sendable {  // confined to `queue`
         guard copied == noErr else { return nil }
         var sample: CMSampleBuffer?
         var size = avcc.count
-        CMSampleBufferCreateReady(allocator: nil, dataBuffer: block, formatDescription: format, sampleCount: 1,
-                                  sampleTimingEntryCount: 0, sampleTimingArray: nil, sampleSizeEntryCount: 1,
-                                  sampleSizeArray: &size, sampleBufferOut: &sample)
+        var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: .invalid, decodeTimeStamp: .invalid)
+        // A timing entry is required: without one a frame can be held until the next arrives, so a screen that
+        // stops changing (exactly after a tap) never emits the frame that shows the change.
+        let made = CMSampleBufferCreateReady(allocator: nil, dataBuffer: block, formatDescription: format,
+                                             sampleCount: 1, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                                             sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample)
+        guard made == noErr else { onError?("sample buffer \(made)"); return nil }
         return sample
     }
 

@@ -10,6 +10,9 @@
   or malformed trailing arguments before moving.
 - The actor prompt now states that the pointer is absolute (a tap lands where the coordinates say),
   instead of the upstream relative-mouse wording; `path` accepts up to 64 points like the firmware.
+- The decoder now gives every sample buffer a timing entry: a frame without one can be held until the next
+  arrives, which is exactly the case after a tap, so the change the agent is waiting for never showed up.
+- A batch of gestures pauses 250 ms (was 120 ms) between its actions, so iOS cannot merge or drop a tap.
 - Firmware build, host drag/parser regression and Swift syntax checks pass; iOS type checking,
   XCTest and actual target-hit/drag behavior still need Mac/device validation.
 

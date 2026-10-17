@@ -46,6 +46,9 @@ extension Pointer: Gestures {}
     /// Awaited before every look and every gesture (the app holds the run while its own UI is in front).
     var gate: (() async throws -> Void)?
     static let maxTokens = ["planner": 1500, "actor": 1000]
+    /// Gap between the gestures of one batch. iOS can merge or drop a tap that follows the previous gesture
+    /// too closely, and a batch often ends with taps the agent cannot see the effect of until the round ends.
+    static let batchGap = 0.25
     private var job: Task<Void, Never>?
     var onFinish: (() -> Void)?
     /// Paused for the board to come back (a line for the UI), or nil when going on.
@@ -301,7 +304,7 @@ extension Pointer: Gestures {}
                 // closing check reports the change, and only that wait looks for a frame newer than the
                 // last action. A brief pause is all iOS needs to register tap N before tap N+1. This is
                 // what made one round of six ticks cost six screen waits.
-                timing.frameMs += await pause()
+                timing.frameMs += await pause(Self.batchGap)
             }
         }
         timing.frameMs += await settle()
